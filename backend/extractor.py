@@ -47,14 +47,29 @@ def find_margins(page: fitz.Page, pno: int) -> Tuple[float, float]:
 
 # Normalize bounding box coordinates
 def normalize_box(box: Any) -> Optional[List[float]]:
+    if not box:
+        return None
+    while isinstance(box, (list, tuple)) and len(box) == 1 and isinstance(box[0], (list, tuple, dict)):
+        box = box[0]
     if isinstance(box, dict):
-        box = [box.get("ymin", 0), box.get("xmin", 0), box.get("ymax", 0), box.get("xmax", 0)]
+        for k in ["box_2d", "box", "bbox", "bounding_box"]:
+            if k in box:
+                return normalize_box(box[k])
+        if all(k in box for k in ["ymin", "xmin", "ymax", "xmax"]):
+            box = [box["ymin"], box["xmin"], box["ymax"], box["xmax"]]
+        elif all(k in box for k in ["top", "left", "bottom", "right"]):
+            box = [box["top"], box["left"], box["bottom"], box["right"]]
     if isinstance(box, (list, tuple)) and len(box) == 4:
         try:
-            return [float(v) for v in box]
+            vals = [float(v) for v in box]
+            ymin, xmin, ymax, xmax = vals
+            if ymax > ymin and xmax > xmin:
+                return [ymin, xmin, ymax, xmax]
         except (ValueError, TypeError):
             return None
     return None
+
+from .model_manager import get_candidate_models, record_model_success, record_model_failure
 
 # Build caption inventory from text
 def scan_captions(doc: fitz.Document) -> Dict[int, List[Dict[str, str]]]:
@@ -82,7 +97,7 @@ def scan_captions(doc: fitz.Document) -> Dict[int, List[Dict[str, str]]]:
 
 # Query Gemini for detected elements
 def _query_vlm(client: Any, page_img: Image.Image, prompt: str) -> List[Dict[str, Any]]:
-    for model_name in VLM_MODELS:
+    for model_name in get_candidate_models(VLM_MODELS):
         for attempt in range(2):
             try:
                 res = client.models.generate_content(
@@ -93,19 +108,22 @@ def _query_vlm(client: Any, page_img: Image.Image, prompt: str) -> List[Dict[str
                 if res and res.text:
                     raw_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", res.text.strip())
                     parsed = json.loads(raw_json)
+                    record_model_success(model_name)
                     if isinstance(parsed, dict):
                         for val in parsed.values():
                             if isinstance(val, list):
                                 return val
                     elif isinstance(parsed, list):
                         return parsed
+                    return []
                 break
             except Exception as err:
+                record_model_failure(model_name, err)
                 err_str = str(err).lower()
-                if any(k in err_str for k in ["429", "quota", "resource_exhausted", "503", "unavailable"]):
-                    time.sleep(2.0 * (attempt + 1))
-                    continue
-                break
+                if any(k in err_str for k in ["exceeded your current quota", "check your plan", "404", "not_found"]):
+                    break
+                time.sleep(1.0)
+                continue
     return []
 
 # Detect all elements on page
@@ -142,16 +160,21 @@ def detect_single_element(
         f"If it spans multiple columns, the box MUST extend across all of them.\n"
         "Exclude body paragraphs that are not part of the element.\n"
         "Return ONLY valid JSON:\n"
-        "{\"elements\": [{\"type\": \"" + elem_type + "\", \"id\": \"" + elem_id + "\", "
+        "{\"elements\": [{\"type\": \"" + elem_type + "\", \"id\": \"" + str(elem_id) + "\", "
         "\"caption\": \"...\", \"box_2d\": [ymin, xmin, ymax, xmax]}]}"
     )
     results = _query_vlm(client, page_img, prompt)
     for item in results:
         item_type = str(item.get("type", "")).lower()
         item_id = str(item.get("id", "")).strip()
-        if elem_type in item_type and item_id == elem_id:
+        if elem_type in item_type and (item_id == str(elem_id) or str(elem_id) in item_id):
             return item
-    return results[0] if results else None
+    if results:
+        res = dict(results[0])
+        res["type"] = elem_type
+        res["id"] = elem_id
+        return res
+    return None
 
 # Crop PIL image by coordinates
 def crop_box(
@@ -182,7 +205,10 @@ def _process_item(
     raw_type = str(item.get("type", "")).lower()
     raw_id = str(item.get("id", "")).strip()
     caption = str(item.get("caption", "")).strip()
-    box = normalize_box(item.get("box_2d"))
+    raw_box = item.get("box_2d")
+    if raw_box is None:
+        raw_box = item.get("box") or item.get("bbox") or item.get("bounding_box")
+    box = normalize_box(raw_box)
 
     if not box or len(box) != 4:
         return
@@ -193,6 +219,11 @@ def _process_item(
         if match:
             raw_id = match.group(1)
 
+    if raw_id.lower().startswith(("table", "tab", "figure", "fig")):
+        m = re.search(r'(?:table|tab\.?|figure|fig\.?)\s*([0-9a-zA-Z]+)', raw_id, re.I)
+        if m:
+            raw_id = m.group(1)
+
     if not raw_id:
         return
 
@@ -201,7 +232,13 @@ def _process_item(
         return
 
     elem_id = int(raw_id) if raw_id.isdigit() else raw_id
-    elem_kind = "figure" if "fig" in raw_type else "table"
+    if "tab" in raw_type or re.search(r'\btable\b', caption, re.I):
+        elem_kind = "table"
+    elif "fig" in raw_type or re.search(r'\bfig', caption, re.I):
+        elem_kind = "figure"
+    else:
+        elem_kind = "figure" if "fig" in raw_type else "table"
+
     unique_key = f"{elem_kind}_{pno}_{elem_id}"
 
     if unique_key in seen_ids:
@@ -270,7 +307,7 @@ def extract_paper(
         page_images[pno] = Image.open(io.BytesIO(pix.tobytes("png")))
 
     page_elements: Dict[int, List[Dict]] = {}
-    max_workers = min(2, max(1, len(candidate_pages)))
+    max_workers = min(4, max(1, len(candidate_pages)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
             pool.submit(detect_page_elements, client, page_images[pno], pno): pno
@@ -298,25 +335,47 @@ def extract_paper(
 
     extracted_figs = {str(f["id"]) for f in figs}
     extracted_tabs = {str(t["id"]) for t in tabs}
+    missing_items = []
     for pno, items in inventory.items():
         for inv_item in items:
             kind = inv_item["type"]
             elem_id = inv_item["id"]
-            is_missing = (kind == "figure" and elem_id not in extracted_figs) or \
-                         (kind == "table" and elem_id not in extracted_tabs)
+            elem_str = str(elem_id)
+            existing_tab = next((t for t in tabs if str(t["id"]) == elem_str), None)
+            is_stub = False
+            if existing_tab:
+                tb_box = existing_tab.get("bbox", [0, 0, 0, 0])
+                if (tb_box[3] - tb_box[1]) < 60:
+                    is_stub = True
+                    tabs.remove(existing_tab)
+                    extracted_tabs.discard(elem_str)
+                    seen_ids.discard(f"table_{pno}_{elem_id}")
+
+            is_missing = (kind == "figure" and elem_str not in extracted_figs) or \
+                         (kind == "table" and (elem_str not in extracted_tabs or is_stub))
             if is_missing:
-                page_img = page_images.get(pno)
-                if page_img is None:
+                if pno not in page_images:
                     pix = doc[pno].get_pixmap(dpi=dpi)
-                    page_img = Image.open(io.BytesIO(pix.tobytes("png")))
-                    page_images[pno] = page_img
-                recovered = detect_single_element(client, page_img, kind, elem_id)
-                if recovered:
-                    _process_item(
-                        recovered, pno, doc[pno], page_img, out_path,
-                        seen_ids, figs, tabs, page_map, scale_factor
-                    )
-                time.sleep(0.3)
+                    page_images[pno] = Image.open(io.BytesIO(pix.tobytes("png")))
+                missing_items.append((pno, kind, elem_id))
+
+    if missing_items:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(3, len(missing_items))) as pool:
+            futures = {
+                pool.submit(detect_single_element, client, page_images[pno], kind, elem_id): (pno, kind, elem_id)
+                for pno, kind, elem_id in missing_items
+            }
+            for future in concurrent.futures.as_completed(futures):
+                pno, kind, elem_id = futures[future]
+                try:
+                    recovered = future.result()
+                    if recovered:
+                        _process_item(
+                            recovered, pno, doc[pno], page_images[pno], out_path,
+                            seen_ids, figs, tabs, page_map, scale_factor
+                        )
+                except Exception:
+                    pass
 
     def sort_key(item: Dict) -> Tuple[int, Any]:
         val = item["id"]

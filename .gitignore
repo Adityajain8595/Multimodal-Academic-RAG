@@ -28,3 +28,7 @@ gcp*.json
 Thumbs.db
 .vscode/
 .idea/
+ 
+# Evaluation
+evaluate.py
+evaluation_report.json

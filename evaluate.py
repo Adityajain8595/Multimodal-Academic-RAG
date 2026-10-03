@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from google import genai
 from backend.pipeline import run_pipeline
 from backend.rag import ask_paper, get_retriever
+from backend.model_manager import get_candidate_models, record_model_success, record_model_failure
 from langchain_chroma import Chroma
 from langchain_cohere import CohereEmbeddings
 import chromadb
@@ -228,15 +229,26 @@ Return ONLY valid JSON in this exact structure:
   "reasoning": "brief 1-2 sentence explanation"
 }}
 """
-    try:
-        res = judge_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config={"response_mime_type": "application/json"}
-        )
-        return json.loads(res.text.strip())
-    except Exception as err:
-        return {"faithfulness": 4, "relevancy": 4, "accuracy": 4, "reasoning": f"Eval fallback: {err}"}
+    judge_models = [
+        "gemini-2.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
+    ]
+    for model_name in get_candidate_models(judge_models):
+        try:
+            res = judge_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            if res and res.text:
+                record_model_success(model_name)
+                return json.loads(res.text.strip())
+        except Exception as err:
+            record_model_failure(model_name, err)
+            continue
+    return {"faithfulness": 4, "relevancy": 4, "accuracy": 4, "reasoning": "Eval fallback"}
 
 def run_evaluation():
     print("=" * 60)

@@ -57,37 +57,40 @@ def run_pipeline(
     clean_prose, page_docs = extract_prose(doc, page_map)
     doc.close()
 
-    # Transcribe tables in parallel
+    # Process visual elements (tables and figures) concurrently
     total_tabs = len(tabs)
-    if total_tabs > 0:
-        update(f"Transcribing {total_tabs} tables into markdown...", 0.45)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, total_tabs)) as pool:
-            futures = {
-                pool.submit(parse_table, client, t, str(fig_dir)): t
+    total_figs = len(figs)
+    total_items = total_tabs + total_figs
+
+    if total_items > 0:
+        update(f"Analyzing {total_tabs} tables and {total_figs} figures concurrently...", 0.45)
+        max_workers = min(8, max(1, total_items))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            tab_futures = {
+                pool.submit(parse_table, client, t, str(fig_dir)): ("table", t)
                 for t in tabs
             }
-            completed = 0
-            for future in concurrent.futures.as_completed(futures):
-                t = futures[future]
-                t["parsed_text"] = future.result()
-                completed += 1
-                update(f"Transcribing table {completed}/{total_tabs}...", 0.45 + 0.15 * (completed / total_tabs))
-
-    # Summarize figures in parallel
-    total_figs = len(figs)
-    if total_figs > 0:
-        update(f"Analyzing {total_figs} figures visually...", 0.60)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, total_figs)) as pool:
-            futures = {
-                pool.submit(summarize_figure, client, f, str(fig_dir)): f
+            fig_futures = {
+                pool.submit(summarize_figure, client, f, str(fig_dir)): ("figure", f)
                 for f in figs
             }
+            all_futures = {**tab_futures, **fig_futures}
             completed = 0
-            for future in concurrent.futures.as_completed(futures):
-                f = futures[future]
-                f["summary"] = future.result()
+            for future in concurrent.futures.as_completed(all_futures):
+                item_type, item = all_futures[future]
+                try:
+                    res = future.result()
+                    if item_type == "table":
+                        item["parsed_text"] = res
+                    else:
+                        item["summary"] = res
+                except Exception:
+                    if item_type == "table":
+                        item["parsed_text"] = f"Table {item.get('id', '')}: {item.get('caption', '')}"
+                    else:
+                        item["summary"] = f"Figure {item.get('id', '')}: {item.get('caption', '')}"
                 completed += 1
-                update(f"Analyzing figure {completed}/{total_figs}...", 0.60 + 0.25 * (completed / total_figs))
+                update(f"Analyzed visual element {completed}/{total_items}...", 0.45 + 0.40 * (completed / total_items))
 
     # Index into vector database
     update("Building persistent Chroma vector store...", 0.90)

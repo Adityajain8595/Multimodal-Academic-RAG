@@ -18,22 +18,24 @@ VISION_MODELS = [
     "gemini-2.5-flash-lite",
 ]
 
+from .model_manager import get_candidate_models, record_model_success, record_model_failure
+
 # Generate content with Gemini vision
 def call_gemini(client: Any, contents: List[Any]) -> str:
-    for model_name in VISION_MODELS:
-        for attempt in range(2):
-            try:
-                res = client.models.generate_content(model=model_name, contents=contents)
-                text = getattr(res, "text", "") or ""
-                if text.strip():
-                    return text.strip()
-                break
-            except Exception as err:
-                err_str = str(err).lower()
-                if any(k in err_str for k in ["429", "resource_exhausted", "quota", "503", "unavailable"]):
-                    time.sleep(1.5 * (attempt + 1))
-                    continue
-                break
+    for model_name in get_candidate_models(VISION_MODELS):
+        try:
+            res = client.models.generate_content(model=model_name, contents=contents)
+            text = getattr(res, "text", "") or ""
+            if text.strip():
+                record_model_success(model_name)
+                return text.strip()
+        except Exception as err:
+            record_model_failure(model_name, err)
+            err_str = str(err).lower()
+            if any(k in err_str for k in ["429", "resource_exhausted", "quota", "404", "not_found"]):
+                continue
+            time.sleep(0.5)
+            continue
     return ""
 
 # Parse table into text
