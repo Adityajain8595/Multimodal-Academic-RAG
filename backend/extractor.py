@@ -12,7 +12,7 @@ from .exceptions import handle_error
 # Rendering configuration
 RENDER_DPI = 200
 CROP_PAD_PX = 8
-VLM_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
+VLM_MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-2.5-flash"]
 
 # Compute header and footer margins
 def find_margins(page: fitz.Page, pno: int) -> Tuple[float, float]:
@@ -90,8 +90,9 @@ def _query_vlm(client: Any, page_img: Image.Image, prompt: str) -> List[Dict[str
                         return parsed
                 break
             except Exception as err:
-                if any(k in str(err).lower() for k in ["429", "quota", "resource_exhausted"]):
-                    time.sleep(1.5 * (attempt + 1))
+                err_str = str(err).lower()
+                if any(k in err_str for k in ["429", "quota", "resource_exhausted", "503", "unavailable"]):
+                    time.sleep(2.0 * (attempt + 1))
                     continue
                 break
     return []
@@ -105,8 +106,10 @@ def detect_page_elements(client: Any, page_img: Image.Image, pno: int) -> List[D
         "  id: identifier exactly as printed (e.g. '1', '2', 'A1')\n"
         "  caption: the full caption text of this element\n"
         "  box_2d: [ymin, xmin, ymax, xmax] in 0-1000 scale.\n"
-        "           The box MUST tightly enclose the ENTIRE element:\n"
-        "           every row, column, header, footnote, and the caption line.\n"
+        "Rules:\n"
+        "1. Full-width multi-column elements: If a table or figure spans across both columns of a two-column page, "
+        "the box MUST cover all columns horizontally from left to right (do not crop only the left column).\n"
+        "2. Boundaries: The box MUST end vertically where the table rows or figure drawings end—do NOT include body text paragraphs below.\n"
         "Return ONLY valid JSON:\n"
         "{\"elements\": [{\"type\": \"figure\"|\"table\", \"id\": \"...\", "
         "\"caption\": \"...\", \"box_2d\": [ymin, xmin, ymax, xmax]}]}"
@@ -121,6 +124,8 @@ def detect_single_element(
     prompt = (
         f"On this academic paper page there is {kind} {elem_id}.\n"
         f"Find {kind} {elem_id} and return its exact bounding box enclosing all rows, columns, headers, and caption.\n"
+        f"If this {kind} spans across multiple columns, the box MUST extend horizontally across all columns.\n"
+        "The box must stop vertically where the element ends without including paragraphs below.\n"
         "Return ONLY valid JSON:\n"
         "{\"elements\": [{\"type\": \"" + elem_type + "\", \"id\": \"" + elem_id + "\", "
         "\"caption\": \"...\", \"box_2d\": [ymin, xmin, ymax, xmax]}]}"

@@ -2,19 +2,27 @@ from pathlib import Path
 from typing import Dict, List, Any
 from PIL import Image
 
+import time
+
 # Supported Gemini vision models
-VISION_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
+VISION_MODELS = ["gemini-3.8-flash", "gemini-2.5-flash"]
 
 # Generate content with Gemini vision
 def call_gemini(client: Any, contents: List[Any]) -> str:
     for model_name in VISION_MODELS:
-        try:
-            res = client.models.generate_content(model=model_name, contents=contents)
-            text = getattr(res, "text", "") or ""
-            if text.strip():
-                return text.strip()
-        except Exception:
-            continue
+        for attempt in range(2):
+            try:
+                res = client.models.generate_content(model=model_name, contents=contents)
+                text = getattr(res, "text", "") or ""
+                if text.strip():
+                    return text.strip()
+                break
+            except Exception as err:
+                err_str = str(err).lower()
+                if any(k in err_str for k in ["429", "resource_exhausted", "quota", "503", "unavailable"]):
+                    time.sleep(2.0 * (attempt + 1))
+                    continue
+                break
     return ""
 
 # Parse table into text
