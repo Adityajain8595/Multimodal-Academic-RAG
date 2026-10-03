@@ -1,13 +1,11 @@
 from pathlib import Path
 from typing import Dict, List, Any
 from PIL import Image
-from .exceptions import handle_error
 
-# Primary and fallback Gemini models
+# Supported Gemini vision models
 VISION_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
 
-# Invoke Gemini vision model
-@handle_error("Gemini API call")
+# Generate content with Gemini vision
 def call_gemini(client: Any, contents: List[Any]) -> str:
     for model_name in VISION_MODELS:
         try:
@@ -19,8 +17,7 @@ def call_gemini(client: Any, contents: List[Any]) -> str:
             continue
     return ""
 
-# Transcribe table image into markdown
-@handle_error("Table parsing")
+# Parse table into text
 def parse_table(client: Any, tab_item: Dict, cache_dir: str = "uploaded_docs/extracted_figures") -> str:
     cache_path = Path(cache_dir) / f"table_{tab_item['id']}_parsed.txt"
     if cache_path.exists():
@@ -52,7 +49,6 @@ def parse_table(client: Any, tab_item: Dict, cache_dir: str = "uploaded_docs/ext
     return f"Table {tab_item['id']}: {tab_item['caption']}"
 
 # Summarize figure architecture and charts
-@handle_error("Figure visual summary")
 def summarize_figure(client: Any, fig_item: Dict, cache_dir: str = "uploaded_docs/extracted_figures") -> str:
     cache_path = Path(cache_dir) / f"figure_{fig_item['id']}_summary.txt"
     if cache_path.exists():

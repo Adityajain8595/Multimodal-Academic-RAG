@@ -15,7 +15,6 @@ CROP_PAD_PX = 8
 VLM_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
 
 # Compute header and footer margins
-@handle_error("Page margin detection")
 def find_margins(page: fitz.Page, pno: int) -> Tuple[float, float]:
     page_h = page.rect.height
     if pno == 0:

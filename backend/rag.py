@@ -91,7 +91,6 @@ def build_index(
     return vstore
 
 # Initialize diverse MMR retriever
-@handle_error("Retriever initialization")
 def get_retriever(vstore: Chroma, k: int = 8):
     return vstore.as_retriever(
         search_type="mmr",
@@ -99,7 +98,6 @@ def get_retriever(vstore: Chroma, k: int = 8):
     )
 
 # Rerank candidates with cross encoder
-@handle_error("Cohere reranking")
 def cohere_rerank(query: str, docs: List[Document], top_n: int = 7) -> List[Document]:
     if not docs:
         return docs
@@ -114,7 +112,6 @@ def cohere_rerank(query: str, docs: List[Document], top_n: int = 7) -> List[Docu
     return [docs[res.index] for res in response.results]
 
 # Setup conversational question answering chain
-@handle_error("RAG chain setup")
 def create_chain():
     llm = ChatCohere(
         model="command-a-plus-05-2026",
@@ -144,7 +141,6 @@ def create_chain():
     return prompt | llm | StrOutputParser()
 
 # Reformulate follow up query
-@handle_error("Query rewriting")
 def rewrite_query(query: str, history: List[Any]) -> str:
     if not history:
         return query
