@@ -235,3 +235,4 @@ COHERE_API_KEY = "your_cohere_api_key"
 ## 7. License
 
 This project is licensed under the [MIT License](LICENSE).
+"# Multimodal-Academic-RAG" 
