@@ -113,6 +113,48 @@ def cohere_rerank(query: str, docs: List[Document], top_n: int = 7) -> List[Docu
     )
     return [docs[res.index] for res in response.results]
 
+# Clean and format LLM output into pristine Markdown
+def sanitize_answer(text: str) -> str:
+    if not text:
+        return text
+
+    # 1. Normalize unicode spaces, zero-width characters, and non-breaking hyphens
+    text = text.replace('\u202f', ' ').replace('\u00a0', ' ').replace('\u200b', '')
+    text = text.replace('\u2011', '-').replace('\u2010', '-')
+
+    # 2. Convert raw HTML breaks into clean Markdown line breaks
+    text = re.sub(r'<br\s*/?>\s*([•\-\*])', r'\n\1', text, flags=re.I)
+    text = re.sub(r'<br\s*/?>', r'\n', text, flags=re.I)
+
+    # 3. Clean up double or unicode bullet markers (- •, * •, •) into standard Markdown (- )
+    text = re.sub(r'(?m)^(\s*)[-*]\s*[•·]\s*', r'\1- ', text)
+    text = re.sub(r'(?m)^(\s*)[•·]\s*', r'\1- ', text)
+
+    # 4. Wrap naked LaTeX commands not already enclosed in $...$ or $$...$$
+    def wrap_latex(segment: str) -> str:
+        pattern = re.compile(r'(\\(?:[a-zA-Z]+)(?:\{[^{}]*\}|\[[^\[\]]*\]|\([^\(\)]*\)|[^\s\$\(\)]+)+)')
+        matches = list(pattern.finditer(segment))
+        if not matches:
+            return segment
+        out = []
+        last_idx = 0
+        for m in matches:
+            start, end = m.span()
+            out.append(segment[last_idx:start])
+            raw_match = m.group(0)
+            math_expr = raw_match.rstrip('.,;:')
+            trail = raw_match[len(math_expr):]
+            out.append(f"${math_expr}${trail}")
+            last_idx = end
+        out.append(segment[last_idx:])
+        return "".join(out)
+
+    tokens = text.split('$')
+    for i in range(0, len(tokens), 2):
+        tokens[i] = wrap_latex(tokens[i])
+
+    return '$'.join(tokens)
+
 # Setup conversational question answering chain
 def create_chain():
     llm = ChatCohere(
@@ -125,18 +167,28 @@ def create_chain():
          "You are an expert AI research assistant for academic papers.\n"
          "Answer ONLY from the retrieved context provided below.\n"
          "Be precise, structured, and factual. Cite page numbers, table IDs, and figure IDs directly.\n\n"
-         "CRITICAL FORMATTING GUIDELINES:\n"
-         "1. MATHEMATICAL NOTATION: Express all mathematical variables, parameters, symbols, intervals, "
-         "tuples, and metric notations using valid LaTeX enclosed in single dollar signs for inline math "
-         "(e.g., $\\hat{{s}}$, $\\hat{{e}}$, $\\hat{{y}} = (\\hat{{s}}, \\hat{{e}})$, $h_t$, $h_{{t+1}}$, $b$, $b'$, "
-         "$C_0T_0$, $C_1T_1$, $R@0.5$, $\\text{{mIoU}}$, $\\text{{Macro }} S$) or double dollar signs for equations. "
-         "NEVER write broken ASCII symbols, disjointed carats like 's ^', or loose spaces like 'h t'. "
-         "Always generate well-formed LaTeX directly.\n"
-         "2. TABLES & COMPARISONS: When presenting data from tables or comparing metrics, format them "
-         "as clear Markdown tables. Do not generate repetitive loops or restatements.\n"
-         "3. STRICT GROUNDING: Never claim a figure or table does not exist if it is in the context. "
-         "If genuinely absent from the retrieved context, say: 'The retrieved context does not include "
-         "Figure/Table X — try re-indexing or rephrasing your query.' Do not hallucinate external facts."),
+         "CRITICAL FORMATTING RULES (STRICT COMPLIANCE REQUIRED):\n"
+         "1. MATHEMATICAL NOTATION & DELIMITERS:\n"
+         "   - EVERY single mathematical formula, operation, function, equation, parameter, variable, or Greek letter MUST be explicitly enclosed in single dollar signs ($...$) for inline math or double dollar signs ($$...$$) for standalone block equations.\n"
+         "   - Example: write $\\text{{Attention}}(Q, K, V) = \\text{{softmax}}\\left(\\frac{{QK^\\top}}{{\\sqrt{{d_k}}}}\\right)V$, NEVER bare \\text{{Attention}}...\n"
+         "   - NEVER output bare/naked LaTeX commands (such as \\text{{...}}, \\frac{{...}}, \\sqrt{{...}}, \\top, \\sum, \\alpha, \\beta, \\cdot) outside of dollar sign delimiters.\n"
+         "   - Always generate valid, clean LaTeX directly.\n"
+         "2. NO RAW HTML:\n"
+         "   - NEVER generate HTML tags such as <br>, <br/>, <span>, <div>, <p>, or <b> anywhere in your response.\n"
+         "   - Always use standard Markdown line breaks and separate paragraphs with blank lines.\n"
+         "3. CLEAN LISTS & BULLET POINTS:\n"
+         "   - Format all bullet points using standard Markdown dashes ('- ').\n"
+         "   - NEVER combine hyphens and bullet symbols (NEVER write '- •' or '* •').\n"
+         "   - NEVER use the unicode bullet character '•'. Each bullet point must be on its own line starting with '- ' followed by a space.\n"
+         "4. STANDARD ASCII TYPOGRAPHY:\n"
+         "   - Use only standard ASCII spaces (space ' ') and standard ASCII hyphens ('-').\n"
+         "   - NEVER output narrow non-breaking spaces (U+202F), non-breaking spaces (U+00A0), or non-breaking hyphens (U+2011).\n"
+         "   - Always write standard text: 'Table 4', 'Figure 1', 'RNN-based', 'English-to-German'.\n"
+         "5. TABLES & COMPARISONS:\n"
+         "   - When presenting data from tables or comparing metrics, format them as clear Markdown tables.\n"
+         "6. STRICT GROUNDING:\n"
+         "   - Never claim a figure or table does not exist if it is in the context.\n"
+         "   - If genuinely absent from the retrieved context, say: 'The retrieved context does not include Figure/Table X — try re-indexing or rephrasing your query.' Do not hallucinate external facts."),
         MessagesPlaceholder(variable_name="history"),
         ("human", "Retrieved Paper Context:\n\n<docs>{documents}</docs>\n\nUser Question: <question>{question}</question>")
     ])
@@ -202,11 +254,12 @@ def ask_paper(
     # Generate answer with language model
     chain = create_chain()
     context = "\n\n---\n\n".join(doc.page_content for doc in merged_docs)
-    ans = chain.invoke({
+    raw_ans = chain.invoke({
         "documents": context,
         "question": query,
         "history": msg_history
     }).strip()
+    ans = sanitize_answer(raw_ans)
 
     # Filter strictly grounded visual sources
     grounded_imgs: List[str] = []
