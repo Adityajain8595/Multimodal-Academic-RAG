@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 import streamlit as st
@@ -89,16 +90,21 @@ with st.sidebar:
         upload_folder = Path("uploaded_docs")
         upload_folder.mkdir(parents=True, exist_ok=True)
         if st.session_state.selected_name != uploaded_pdf.name:
-            for old in upload_folder.glob("*.pdf"):
-                old.unlink(missing_ok=True)
             cache_folder = upload_folder / "extracted_figures"
             if cache_folder.exists():
                 for f in cache_folder.glob("*"):
                     if f.is_file():
-                        f.unlink(missing_ok=True)
+                        try:
+                            f.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
         dest_file = upload_folder / "document.pdf"
-        dest_file.write_bytes(uploaded_pdf.getbuffer())
+        try:
+            dest_file.write_bytes(uploaded_pdf.getbuffer())
+        except PermissionError:
+            dest_file = upload_folder / f"doc_{int(time.time())}.pdf"
+            dest_file.write_bytes(uploaded_pdf.getbuffer())
         st.session_state.selected_source = str(dest_file)
         st.session_state.selected_name = uploaded_pdf.name
 

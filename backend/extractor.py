@@ -11,6 +11,7 @@ from .exceptions import handle_error
 
 # Rendering configuration
 RENDER_DPI = 200
+CROP_PAD_PX = 16
 VLM_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.7-flash",
@@ -117,9 +118,12 @@ def detect_page_elements(client: Any, page_img: Image.Image, pno: int) -> List[D
         "  caption: the full caption text of this element\n"
         "  box_2d: [ymin, xmin, ymax, xmax] in 0-1000 scale.\n"
         "Rules:\n"
-        "1. Full-width multi-column elements: If a table or figure spans across both columns of a two-column page, "
-        "the box MUST cover all columns horizontally from left to right (do not crop only the left column).\n"
-        "2. Boundaries: The box MUST end vertically where the table rows or figure drawings end—do NOT include body text paragraphs below.\n"
+        "1. The box MUST enclose the COMPLETE element: its label/caption AND its full body "
+        "(every table row and column, or the entire plot with axes, ticks and legend). "
+        "Captions may sit above (common for tables) or below (common for figures); include both parts either way.\n"
+        "2. Include the full caption text horizontally and vertically, from the 'Figure/Table N' label to its last line.\n"
+        "3. If an element spans both columns, the box MUST cover the full width.\n"
+        "4. Exclude body paragraphs that are not part of the element.\n"
         "Return ONLY valid JSON:\n"
         "{\"elements\": [{\"type\": \"figure\"|\"table\", \"id\": \"...\", "
         "\"caption\": \"...\", \"box_2d\": [ymin, xmin, ymax, xmax]}]}"
@@ -133,9 +137,10 @@ def detect_single_element(
     kind = "Figure" if elem_type == "figure" else "Table"
     prompt = (
         f"On this academic paper page there is {kind} {elem_id}.\n"
-        f"Find {kind} {elem_id} and return its exact bounding box enclosing all rows, columns, headers, and caption.\n"
-        f"If this {kind} spans across multiple columns, the box MUST extend horizontally across all columns.\n"
-        "The box must stop vertically where the element ends without including paragraphs below.\n"
+        f"Return one bounding box enclosing the COMPLETE {kind} {elem_id}: its full caption "
+        f"(above or below) AND its entire body (all rows, columns, axes, legend).\n"
+        f"If it spans multiple columns, the box MUST extend across all of them.\n"
+        "Exclude body paragraphs that are not part of the element.\n"
         "Return ONLY valid JSON:\n"
         "{\"elements\": [{\"type\": \"" + elem_type + "\", \"id\": \"" + elem_id + "\", "
         "\"caption\": \"...\", \"box_2d\": [ymin, xmin, ymax, xmax]}]}"

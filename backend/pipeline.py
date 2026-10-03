@@ -55,6 +55,7 @@ def run_pipeline(
     # Extract clean prose text
     update("Extracting clean continuous prose text...", 0.30)
     clean_prose, page_docs = extract_prose(doc, page_map)
+    doc.close()
 
     # Transcribe tables in parallel
     total_tabs = len(tabs)

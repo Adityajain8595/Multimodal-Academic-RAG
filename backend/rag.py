@@ -28,11 +28,13 @@ def build_index(
     paper_name: Optional[str] = None
 ) -> Chroma:
     chroma_path = Path(chroma_dir)
-    if chroma_path.exists():
-        shutil.rmtree(chroma_path, ignore_errors=True)
     chroma_path.mkdir(parents=True, exist_ok=True)
 
     client = chromadb.PersistentClient(path=chroma_dir)
+    try:
+        client.delete_collection("multimodal_rag_clean")
+    except Exception:
+        pass
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=80)
     prose_docs = [
