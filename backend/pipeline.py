@@ -60,7 +60,7 @@ def run_pipeline(
     total_tabs = len(tabs)
     if total_tabs > 0:
         update(f"Transcribing {total_tabs} tables into markdown...", 0.45)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, total_tabs)) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, total_tabs)) as pool:
             futures = {
                 pool.submit(parse_table, client, t, str(fig_dir)): t
                 for t in tabs
@@ -76,7 +76,7 @@ def run_pipeline(
     total_figs = len(figs)
     if total_figs > 0:
         update(f"Analyzing {total_figs} figures visually...", 0.60)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, total_figs)) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, total_figs)) as pool:
             futures = {
                 pool.submit(summarize_figure, client, f, str(fig_dir)): f
                 for f in figs

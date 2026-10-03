@@ -5,7 +5,18 @@ from PIL import Image
 import time
 
 # Supported Gemini vision models
-VISION_MODELS = ["gemini-3.8-flash", "gemini-2.5-flash"]
+VISION_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
 
 # Generate content with Gemini vision
 def call_gemini(client: Any, contents: List[Any]) -> str:
@@ -20,7 +31,7 @@ def call_gemini(client: Any, contents: List[Any]) -> str:
             except Exception as err:
                 err_str = str(err).lower()
                 if any(k in err_str for k in ["429", "resource_exhausted", "quota", "503", "unavailable"]):
-                    time.sleep(2.0 * (attempt + 1))
+                    time.sleep(1.5 * (attempt + 1))
                     continue
                 break
     return ""

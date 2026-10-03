@@ -11,8 +11,18 @@ from .exceptions import handle_error
 
 # Rendering configuration
 RENDER_DPI = 200
-CROP_PAD_PX = 8
-VLM_MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-2.5-flash"]
+VLM_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
 
 # Compute header and footer margins
 def find_margins(page: fitz.Page, pno: int) -> Tuple[float, float]:
