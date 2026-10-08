@@ -1,24 +1,18 @@
 import base64
 import json
-import os
+from pathlib import Path
 import shutil
 import time
-from pathlib import Path
+
 from dotenv import load_dotenv
 import streamlit as st
-import chromadb
-from langchain_chroma import Chroma
-from langchain_cohere import CohereEmbeddings
 
-# Import modular backend components
-from backend.pipeline import run_pipeline
-from backend.rag import ask_paper, get_retriever
 from backend.exceptions import RAGError
+from backend.pipeline import run_pipeline
+from backend.rag import ask_paper, get_retriever, load_vector_store
 
-# Load environment configuration
 load_dotenv()
 
-# Page setup and layout
 st.set_page_config(
     page_title="Multimodal Academic RAG",
     page_icon="🔬",
@@ -26,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Apply background styling
+
 def get_background_css(bg_file: str = "assets/background.jpg") -> str:
     if not Path(bg_file).exists():
         return ""
@@ -41,9 +35,9 @@ def get_background_css(bg_file: str = "assets/background.jpg") -> str:
     </style>
     """
 
+
 st.markdown(get_background_css(), unsafe_allow_html=True)
 
-# Initialize application session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "retriever" not in st.session_state:
@@ -55,18 +49,12 @@ if "selected_source" not in st.session_state:
 if "selected_name" not in st.session_state:
     st.session_state.selected_name = None
 
-# Restore existing Chroma database
+
 def load_existing_store(chroma_dir: str = "./chroma_db"):
     db_path = Path(chroma_dir)
     if db_path.exists() and st.session_state.retriever is None:
         try:
-            embed_model = CohereEmbeddings(model="embed-english-v3.0", client=None, async_client=None)
-            client = chromadb.PersistentClient(path=chroma_dir)
-            vstore = Chroma(
-                client=client,
-                collection_name="multimodal_rag_clean",
-                embedding_function=embed_model
-            )
+            vstore = load_vector_store(chroma_dir)
             st.session_state.retriever = get_retriever(vstore, k=8)
             meta_path = db_path / "paper_meta.json"
             if meta_path.exists():
@@ -75,9 +63,9 @@ def load_existing_store(chroma_dir: str = "./chroma_db"):
         except Exception:
             st.session_state.retriever = None
 
+
 load_existing_store()
 
-# Sidebar paper management controls
 with st.sidebar:
     st.title("🔬 Paper Control")
     st.markdown("Multimodal RAG equipped for deep paper layout, figures, and tables comprehension.")
@@ -167,11 +155,9 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# Main conversational chat interface
 st.title("Multimodal Academic Research Assistant")
 st.caption(f"Currently querying: **{st.session_state.current_paper}**")
 
-# Render persisted conversation history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -197,7 +183,6 @@ for msg in st.session_state.messages:
                     passages_md.append(f"{idx}. **[{doc_type.upper()} · p.{doc_page}]** {clean_text}")
                 st.markdown("\n".join(passages_md))
 
-# Handle new user query
 if prompt_text := st.chat_input("Ask a question about figures, tables, math, or methodology..."):
     with st.chat_message("user"):
         st.markdown(prompt_text)

@@ -1,24 +1,43 @@
 import json
 import os
-import re
-import shutil
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Any
-from dotenv import load_dotenv
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
 import chromadb
 import cohere
-from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_cohere import ChatCohere, CohereEmbeddings
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from .exceptions import handle_error
 
 load_dotenv()
 
-# Build multimodal Chroma vector store
+COLLECTION_NAME = "multimodal_rag_clean"
+EMBED_MODEL_NAME = "embed-english-v3.0"
+COHERE_CHAT_MODEL = "command-a-plus-05-2026"
+COHERE_RERANK_MODEL = "rerank-english-v3.0"
+
+
+def get_embedding_model() -> CohereEmbeddings:
+    return CohereEmbeddings(model=EMBED_MODEL_NAME, client=None, async_client=None)
+
+
+def load_vector_store(chroma_dir: str = "./chroma_db") -> Chroma:
+    client = chromadb.PersistentClient(path=chroma_dir)
+    return Chroma(
+        client=client,
+        collection_name=COLLECTION_NAME,
+        embedding_function=get_embedding_model()
+    )
+
+
 @handle_error("Vector store indexing")
 def build_index(
     page_docs: List[Dict],
@@ -32,7 +51,7 @@ def build_index(
 
     client = chromadb.PersistentClient(path=chroma_dir)
     try:
-        client.delete_collection("multimodal_rag_clean")
+        client.delete_collection(COLLECTION_NAME)
     except Exception:
         pass
 
@@ -71,12 +90,10 @@ def build_index(
     ]
 
     all_splits = text_splits + tab_splits + fig_splits
-    embed_model = CohereEmbeddings(model="embed-english-v3.0", client=None, async_client=None)
-
     vstore = Chroma(
         client=client,
-        collection_name="multimodal_rag_clean",
-        embedding_function=embed_model
+        collection_name=COLLECTION_NAME,
+        embedding_function=get_embedding_model()
     )
     if all_splits:
         vstore.add_documents(all_splits)
@@ -92,20 +109,20 @@ def build_index(
 
     return vstore
 
-# Initialize diverse MMR retriever
+
 def get_retriever(vstore: Chroma, k: int = 8):
     return vstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": k, "fetch_k": 40, "lambda_mult": 0.7}
     )
 
-# Rerank candidates with cross encoder
+
 def cohere_rerank(query: str, docs: List[Document], top_n: int = 7) -> List[Document]:
     if not docs:
         return docs
     client = cohere.Client(os.getenv("COHERE_API_KEY"))
     response = client.rerank(
-        model="rerank-english-v3.0",
+        model=COHERE_RERANK_MODEL,
         query=query,
         documents=[doc.page_content for doc in docs],
         top_n=min(top_n, len(docs)),
@@ -113,7 +130,6 @@ def cohere_rerank(query: str, docs: List[Document], top_n: int = 7) -> List[Docu
     )
     return [docs[res.index] for res in response.results]
 
-# Clean and format LLM output into pristine Markdown
 def sanitize_answer(text: str) -> str:
     if not text:
         return text
@@ -155,10 +171,10 @@ def sanitize_answer(text: str) -> str:
 
     return '$'.join(tokens)
 
-# Setup conversational question answering chain
+
 def create_chain():
     llm = ChatCohere(
-        model="command-a-plus-05-2026",
+        model=COHERE_CHAT_MODEL,
         temperature=0,
         frequency_penalty=0.2
     )
@@ -194,11 +210,11 @@ def create_chain():
     ])
     return prompt | llm | StrOutputParser()
 
-# Reformulate follow up query
+
 def rewrite_query(query: str, history: List[Any]) -> str:
     if not history:
         return query
-    llm = ChatCohere(model="command-a-plus-05-2026", temperature=0)
+    llm = ChatCohere(model=COHERE_CHAT_MODEL, temperature=0)
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a query reformulator. Given the chat history, reformulate the follow-up question into a concise standalone search query for document retrieval. Do NOT answer the question. Output ONLY the standalone search query without preamble or quotes."),
         MessagesPlaceholder(variable_name="history"),
@@ -208,7 +224,7 @@ def rewrite_query(query: str, history: List[Any]) -> str:
     res = chain.invoke({"history": history, "question": query})
     return res.strip() or query
 
-# Execute hybrid multimodal paper query
+
 @handle_error("RAG query execution")
 def ask_paper(
     retriever: Any,
@@ -226,7 +242,6 @@ def ask_paper(
 
     search_query = rewrite_query(query, msg_history) if msg_history else query
 
-    # Deterministic metadata lookup for elements
     pinned_docs: List[Document] = []
     collection = retriever.vectorstore._collection
     for match in re.finditer(r'\b(figure|fig\.?|table|tab\.?)\s*([0-9a-zA-Z]+)\b', query, re.I):
@@ -244,14 +259,12 @@ def ask_paper(
         except Exception:
             pass
 
-    # Retrieve and rerank semantic candidates
     semantic_docs = retriever.invoke(search_query)
     pinned_texts = {doc.page_content for doc in pinned_docs}
     unpinned = [doc for doc in semantic_docs if doc.page_content not in pinned_texts]
     reranked = cohere_rerank(query, unpinned, top_n=7)
     merged_docs = list(pinned_docs) + reranked
 
-    # Generate answer with language model
     chain = create_chain()
     context = "\n\n---\n\n".join(doc.page_content for doc in merged_docs)
     raw_ans = chain.invoke({
@@ -261,7 +274,6 @@ def ask_paper(
     }).strip()
     ans = sanitize_answer(raw_ans)
 
-    # Filter strictly grounded visual sources
     grounded_imgs: List[str] = []
     lower_ans = ans.lower()
     lower_query = query.lower()
@@ -285,3 +297,4 @@ def ask_paper(
             grounded_imgs.append(path)
 
     return ans, merged_docs, grounded_imgs, search_query
+

@@ -1,11 +1,11 @@
 from functools import wraps
-from typing import Callable, Any
+from typing import Any, Callable
 
-# Base domain exception
+
 class RAGError(Exception):
     pass
 
-# Stage execution wrapper
+
 def handle_error(stage: str) -> Callable:
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)

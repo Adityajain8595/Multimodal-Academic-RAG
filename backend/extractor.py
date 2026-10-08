@@ -1,31 +1,27 @@
+import concurrent.futures
 import io
 import json
+from pathlib import Path
 import re
 import time
-import concurrent.futures
-from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
+
 from PIL import Image
 import pymupdf as fitz
-from .exceptions import handle_error
 
-# Rendering configuration
+from .exceptions import handle_error
+from .model_manager import (
+    VISION_MODELS,
+    get_candidate_models,
+    record_model_failure,
+    record_model_success,
+)
+
 RENDER_DPI = 200
 CROP_PAD_PX = 16
-VLM_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-]
+VLM_MODELS = VISION_MODELS
 
-# Compute header and footer margins
+
 def find_margins(page: fitz.Page, pno: int) -> Tuple[float, float]:
     page_h = page.rect.height
     if pno == 0:
@@ -45,7 +41,7 @@ def find_margins(page: fitz.Page, pno: int) -> Tuple[float, float]:
                 bot_y = min(bot_y, y0 - 4.0)
     return top_y, bot_y
 
-# Normalize bounding box coordinates
+
 def normalize_box(box: Any) -> Optional[List[float]]:
     if not box:
         return None
@@ -69,9 +65,7 @@ def normalize_box(box: Any) -> Optional[List[float]]:
             return None
     return None
 
-from .model_manager import get_candidate_models, record_model_success, record_model_failure
 
-# Build caption inventory from text
 def scan_captions(doc: fitz.Document) -> Dict[int, List[Dict[str, str]]]:
     pattern = re.compile(
         r"^(Figure|Fig\.?|Table|Tab\.?)\s+([0-9A-Za-z]+(?:\.[0-9]+)?)"
@@ -95,7 +89,7 @@ def scan_captions(doc: fitz.Document) -> Dict[int, List[Dict[str, str]]]:
                 inventory[pno].append({"type": kind, "id": elem_id, "caption": text})
     return inventory
 
-# Query Gemini for detected elements
+
 def _query_vlm(client: Any, page_img: Image.Image, prompt: str) -> List[Dict[str, Any]]:
     for model_name in get_candidate_models(VLM_MODELS):
         for attempt in range(2):
@@ -126,7 +120,7 @@ def _query_vlm(client: Any, page_img: Image.Image, prompt: str) -> List[Dict[str
                 continue
     return []
 
-# Detect all elements on page
+
 def detect_page_elements(client: Any, page_img: Image.Image, pno: int) -> List[Dict[str, Any]]:
     prompt = (
         "Identify every figure, plot, chart, diagram, and table on this academic paper page.\n"
@@ -148,7 +142,7 @@ def detect_page_elements(client: Any, page_img: Image.Image, pno: int) -> List[D
     )
     return _query_vlm(client, page_img, prompt)
 
-# Targeted detection for missed element
+
 def detect_single_element(
     client: Any, page_img: Image.Image, elem_type: str, elem_id: str
 ) -> Optional[Dict[str, Any]]:
@@ -176,7 +170,7 @@ def detect_single_element(
         return res
     return None
 
-# Crop PIL image by coordinates
+
 def crop_box(
     page_img: Image.Image,
     ymin: float, xmin: float, ymax: float, xmax: float,
@@ -189,7 +183,7 @@ def crop_box(
     y1 = min(height, int((ymax / 1000.0) * height) + pad)
     return page_img.crop((x0, y0, x1, y1))
 
-# Process single detected bounding box
+
 def _process_item(
     item: Dict[str, Any],
     pno: int,
@@ -275,7 +269,7 @@ def _process_item(
     else:
         tabs.append(record)
 
-# Extract figures and tables from PDF
+
 @handle_error("Paper elements extraction")
 def extract_paper(
     client: Any,
@@ -385,7 +379,7 @@ def extract_paper(
     tabs.sort(key=sort_key)
     return doc, figs, tabs, page_map
 
-# Extract clean continuous prose text
+
 @handle_error("Paper prose extraction")
 def extract_prose(doc: fitz.Document, page_map: Dict[int, List[fitz.Rect]]) -> Tuple[str, List[Dict]]:
     page_docs: List[Dict] = []

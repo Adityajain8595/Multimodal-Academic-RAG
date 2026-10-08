@@ -1,25 +1,27 @@
-import os
-import shutil
 import concurrent.futures
+import os
 from pathlib import Path
-from typing import Callable, Optional, Dict, Any
+import shutil
+from typing import Any, Callable, Dict, Optional
+
 from dotenv import load_dotenv
 from google import genai
+
 from .exceptions import handle_error
 from .extractor import extract_paper, extract_prose
-from .vision import parse_table, summarize_figure
 from .rag import build_index, get_retriever
+from .vision import parse_table, summarize_figure
 
 load_dotenv()
 
-# Initialize Gemini API client
+
 def get_genai_client() -> genai.Client:
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("Missing GOOGLE_API_KEY environment variable.")
     return genai.Client(api_key=api_key)
 
-# Execute multimodal ingestion pipeline
+
 @handle_error("End-to-end ingestion pipeline")
 def run_pipeline(
     pdf_source: str,
@@ -48,16 +50,13 @@ def run_pipeline(
 
     client = get_genai_client()
 
-    # Extract visual elements via VLM
     update("Extracting figures and tables with VLM...", 0.15)
     doc, figs, tabs, page_map = extract_paper(client, str(dest_pdf), out_dir=str(fig_dir))
 
-    # Extract clean prose text
     update("Extracting clean continuous prose text...", 0.30)
     clean_prose, page_docs = extract_prose(doc, page_map)
     doc.close()
 
-    # Process visual elements (tables and figures) concurrently
     total_tabs = len(tabs)
     total_figs = len(figs)
     total_items = total_tabs + total_figs
@@ -92,7 +91,6 @@ def run_pipeline(
                 completed += 1
                 update(f"Analyzed visual element {completed}/{total_items}...", 0.45 + 0.40 * (completed / total_items))
 
-    # Index into vector database
     update("Building persistent Chroma vector store...", 0.90)
     vstore = build_index(page_docs, tabs, figs, chroma_dir=chroma_dir, paper_name=title)
     retriever = get_retriever(vstore, k=8)

@@ -1,26 +1,17 @@
 from pathlib import Path
-from typing import Dict, List, Any
+import time
+from typing import Any, Dict, List
+
 from PIL import Image
 
-import time
+from .model_manager import (
+    VISION_MODELS,
+    get_candidate_models,
+    record_model_failure,
+    record_model_success,
+)
 
-# Supported Gemini vision models
-VISION_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-]
 
-from .model_manager import get_candidate_models, record_model_success, record_model_failure
-
-# Generate content with Gemini vision
 def call_gemini(client: Any, contents: List[Any]) -> str:
     for model_name in get_candidate_models(VISION_MODELS):
         try:
@@ -38,7 +29,7 @@ def call_gemini(client: Any, contents: List[Any]) -> str:
             continue
     return ""
 
-# Parse table into text
+
 def parse_table(client: Any, tab_item: Dict, cache_dir: str = "uploaded_docs/extracted_figures") -> str:
     cache_path = Path(cache_dir) / f"table_{tab_item['id']}_parsed.txt"
     if cache_path.exists():
@@ -69,7 +60,7 @@ def parse_table(client: Any, tab_item: Dict, cache_dir: str = "uploaded_docs/ext
         pass
     return f"Table {tab_item['id']}: {tab_item['caption']}"
 
-# Summarize figure architecture and charts
+
 def summarize_figure(client: Any, fig_item: Dict, cache_dir: str = "uploaded_docs/extracted_figures") -> str:
     cache_path = Path(cache_dir) / f"figure_{fig_item['id']}_summary.txt"
     if cache_path.exists():
